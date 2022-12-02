@@ -5,10 +5,14 @@ import {
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
+  sendAndConfirmTransaction,
+  SystemProgram,
   Transaction,
 } from "@solana/web3.js";
 import { useEffect, useState } from "react";
+import * as buffer from "buffer";
 
+window.Buffer = buffer.Buffer;
 // create types
 type DisplayEncoding = "utf8" | "hex";
 
@@ -100,29 +104,89 @@ function App() {
     setWalletKey(undefined);
   };
 
-  const createSolanaAccount = async () => {
-    newAccount = Keypair.generate();
-    console.log("New Account created: ", newAccount.publicKey.toString());
+  const createAndAirdropToNewAccount = async () => {
+    try {
+      newAccount = Keypair.generate();
+      console.log("New Account created: ", newAccount.publicKey.toString());
+
+      const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
+
+      console.log("Airdrop requested to: ", newAccount.publicKey.toString());
+      const fromAirDropSignature = await connection.requestAirdrop(
+        newAccount.publicKey,
+        2 * LAMPORTS_PER_SOL
+      );
+
+      let latestBlockhash = await connection.getLatestBlockhash();
+
+      await connection.confirmTransaction({
+        blockhash: latestBlockhash.blockhash,
+        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+        signature: fromAirDropSignature,
+      });
+
+      console.log("Airdrop confirmed");
+    } catch (err) {
+      console.log(err);
+    }
   };
 
-  const airdropToNewAccount = async () => {
+  const transfer2SolToConnectedWallet = async () => {
     const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
-    console.log("Airdrop requested to: ", newAccount.publicKey.toString());
-    const fromAirDropSignature = await connection.requestAirdrop(
-      newAccount.publicKey,
-      2 * LAMPORTS_PER_SOL
-    );
 
-    let latestBlockhash = await connection.getLatestBlockhash();
+    // @ts-ignore
+    const { solana } = window;
+    if (solana) {
+      try {
+        const response = await solana.connect();
+        let toWalletBalance = await getWalletBalance(response.publicKey);
+        let fromWalletBalance = await getWalletBalance(newAccount.publicKey);
+        console.log("Starting connected wallet balance: ", toWalletBalance);
+        console.log(
+          "Starting newly created wallet balance: ",
+          fromWalletBalance
+        );
 
-    await connection.confirmTransaction({
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-      signature: fromAirDropSignature,
-    });
-    console.log("Airdrop confirmed");
+        var transaction = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: newAccount.publicKey,
+            toPubkey: response.publicKey,
+            lamports: LAMPORTS_PER_SOL,
+          })
+        );
+
+        // Sign transaction
+        var signature = await sendAndConfirmTransaction(
+          connection,
+          transaction,
+          [newAccount]
+        );
+        console.log("Transfer signature", signature);
+
+        toWalletBalance = await getWalletBalance(response.publicKey);
+        fromWalletBalance = await getWalletBalance(newAccount.publicKey);
+        console.log("Finished connected wallet balance: ", toWalletBalance);
+        console.log(
+          "Finished newly created wallet balance: ",
+          fromWalletBalance
+        );
+      } catch (err) {
+        console.log(err);
+      }
+    }
   };
 
+  const getWalletBalance = async (publicKey: PublicKey) => {
+    try {
+      const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
+      const walletBalance = await connection.getBalance(
+        new PublicKey(publicKey)
+      );
+      return walletBalance;
+    } catch (err) {
+      console.log(err);
+    }
+  };
   // HTML code for the app
   return (
     <div className="App">
@@ -135,7 +199,7 @@ function App() {
               fontWeight: "bold",
               borderRadius: "5px",
             }}
-            onClick={createSolanaAccount}
+            onClick={createAndAirdropToNewAccount}
           >
             Create a new Solana account
           </button>
@@ -148,7 +212,7 @@ function App() {
               fontWeight: "bold",
               borderRadius: "5px",
             }}
-            onClick={airdropToNewAccount}
+            onClick={transfer2SolToConnectedWallet}
           >
             Transfer to a new wallet
           </button>
